@@ -1,0 +1,7 @@
+# Link the C runtime statically so the Windows binary has no redistributable dependency.
+# Linux static builds use the musl target, which is static by default.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "target-feature=+crt-static"]

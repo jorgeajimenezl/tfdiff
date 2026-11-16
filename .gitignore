@@ -1,0 +1,11 @@
+/target
+
+# Terraform working files: state may hold secrets and must never be committed.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+plan.bin
+
+# Claude
+.claude/
