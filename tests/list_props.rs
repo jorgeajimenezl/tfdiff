@@ -9,6 +9,7 @@ use tfdiff::diff::diff_plan;
 use tfdiff::diff::list::{match_keyed, match_positional, unique_keys};
 use tfdiff::plan::Plan;
 use tfdiff::report::{AttrChange, Op, Report};
+use tfdiff::schema::Schemas;
 
 /// Few distinct keys, so duplicates and literal `a#2` collisions are common.
 fn key() -> impl Strategy<Value = String> {
@@ -44,20 +45,51 @@ fn any_json() -> impl Strategy<Value = Value> {
     })
 }
 
-fn report(change: &Value) -> Report {
+fn report(change: &Value, config: &Config, schemas: Option<&Schemas>) -> Report {
     let bytes = serde_json::to_vec(&json!({
         "format_version": "1.2",
         "resource_changes": [{"address": "t.x", "mode": "managed", "type": "t", "change": change}],
     }))
     .unwrap();
-    diff_plan(&Plan::from_slice(&bytes).unwrap(), &Config::default())
+    diff_plan(&Plan::from_slice(&bytes).unwrap(), config, schemas)
 }
 
+/// `rules` keyed by `name`, as a user would configure it.
+fn keyed() -> Config {
+    Config::parse("[list_keys]\n\"t.rules\" = \"name\"\n").unwrap()
+}
+
+/// Schema declaring `t.rules` as a set of dynamic values.
+fn set_schema() -> Schemas {
+    let bytes = serde_json::to_vec(&json!({
+        "format_version": "1.0",
+        "provider_schemas": {"p": {"resource_schemas": {"t": {"block": {"attributes": {
+            "rules": {"type": ["set", "dynamic"]},
+        }}}}}},
+    }))
+    .unwrap();
+    Schemas::from_slice(&bytes, std::path::Path::new("test")).unwrap()
+}
+
+fn changes_with(
+    before: &Value,
+    after: &Value,
+    config: &Config,
+    schemas: Option<&Schemas>,
+) -> Vec<AttrChange> {
+    report(
+        &json!({"actions": ["update"], "before": before, "after": after}),
+        config,
+        schemas,
+    )
+    .resources
+    .pop()
+    .map_or_else(Vec::new, |resource| resource.changes)
+}
+
+/// Changes with `rules` keyed by `name`.
 fn changes(before: &Value, after: &Value) -> Vec<AttrChange> {
-    report(&json!({"actions": ["update"], "before": before, "after": after}))
-        .resources
-        .pop()
-        .map_or_else(Vec::new, |resource| resource.changes)
+    changes_with(before, after, &keyed(), None)
 }
 
 proptest! {
@@ -175,6 +207,44 @@ proptest! {
     }
 
     #[test]
+    fn without_config_or_schema_lists_are_positional(before in elements(), after in elements()) {
+        let found = changes_with(&json!({"rules": before}), &json!({"rules": after}), &Config::default(), None);
+        for change in &found {
+            prop_assert_ne!(change.op, Op::Shuffled);
+            // Only positions label elements: `rules[<digits>]`, never `rules[<name>]`.
+            let label = change.path.trim_start_matches("rules[").split(']').next().unwrap();
+            prop_assert!(label.parse::<usize>().is_ok(), "{}", change.path);
+        }
+        // Elements at the same position are compared with each other.
+        let common = before.len().min(after.len());
+        let differing = (0..common).filter(|&i| before[i] != after[i]).count();
+        let touched: BTreeSet<&str> = found.iter().map(|change| change.path.split(']').next().unwrap()).collect();
+        prop_assert_eq!(touched.len(), differing + before.len().abs_diff(after.len()));
+    }
+
+    #[test]
+    fn permuting_a_schema_set_changes_nothing(items in prop::collection::vec(any_json(), 0..6), by in 0..6usize) {
+        let schemas = set_schema();
+        let mut rotated = items.clone();
+        if !rotated.is_empty() {
+            let by = by % rotated.len();
+            rotated.rotate_left(by);
+        }
+        let found = changes_with(&json!({"rules": items}), &json!({"rules": rotated}), &Config::default(), Some(&schemas));
+        prop_assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn adding_to_a_schema_set_is_one_addition(items in prop::collection::vec(any_json(), 0..6), at in 0..7usize) {
+        let schemas = set_schema();
+        let mut longer = items.clone();
+        longer.insert(at.min(items.len()), json!({"fresh": "element"}));
+        let found = changes_with(&json!({"rules": items}), &json!({"rules": longer}), &Config::default(), Some(&schemas));
+        prop_assert_eq!(found.len(), 1, "{:?}", found);
+        prop_assert_eq!(found[0].op, Op::Gained);
+    }
+
+    #[test]
     fn arbitrary_plans_never_panic(
         before in any_json(),
         after in any_json(),
@@ -183,16 +253,20 @@ proptest! {
         after_unknown in any_json(),
         actions in prop::sample::select(vec!["update", "create", "delete", "no-op"]),
     ) {
-        let report = report(&json!({
+        let change = json!({
             "actions": [actions],
             "before": before,
             "after": after,
             "before_sensitive": before_sensitive,
             "after_sensitive": after_sensitive,
             "after_unknown": after_unknown,
-        }));
+        });
+        let schemas = set_schema();
+        for schemas in [None, Some(&schemas)] {
+        let report = report(&change, &keyed(), schemas);
         for renderer in tfdiff::render::registry() {
             renderer.render(&report, &mut Vec::new()).unwrap();
+        }
         }
     }
 }

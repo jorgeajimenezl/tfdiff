@@ -20,6 +20,7 @@ use serde_json::{Number, Value};
 use crate::diff::path::Path;
 use crate::labels;
 use crate::plan::Plan;
+use crate::schema::Shape;
 
 static NULL: Value = Value::Null;
 
@@ -172,11 +173,25 @@ impl Redactor {
 
     /// Redacts `value` found at `path`, honouring its sensitivity `mask`
     /// (the matching subtree of `before_sensitive` / `after_sensitive`).
-    pub(crate) fn show(&self, path: &Path, value: &Value, mask: &Value) -> Shown {
+    /// `shape` is what the provider schema says about the value, when known;
+    /// it lets secret-looking map keys be hidden too.
+    pub(crate) fn show(
+        &self,
+        path: &Path,
+        value: &Value,
+        mask: &Value,
+        shape: Option<&Shape>,
+    ) -> Shown {
         let hinted = path.attrs().any(name_hints_secret);
         Shown {
-            node: self.redact(hinted, value, mask),
+            node: self.redact(hinted, value, mask, shape),
         }
+    }
+
+    /// True when a map key must not be printed: it equals or contains a value
+    /// flagged elsewhere in the plan, or is shaped like a credential.
+    pub(crate) fn hides_key(&self, key: &str) -> bool {
+        self.is_secret(key)
     }
 
     /// Hides `value` entirely, reporting only an element count for collections.
@@ -186,7 +201,7 @@ impl Redactor {
         }
     }
 
-    fn redact(&self, hinted: bool, value: &Value, mask: &Value) -> Node {
+    fn redact(&self, hinted: bool, value: &Value, mask: &Value, shape: Option<&Shape>) -> Node {
         if mask == &Value::Bool(true) {
             return hidden(value);
         }
@@ -206,23 +221,38 @@ impl Redactor {
                     .iter()
                     .enumerate()
                     .map(|(index, item)| {
-                        self.redact(hinted, item, mask.get(index).unwrap_or(&NULL))
-                    })
-                    .collect(),
-            ),
-            Value::Object(fields) => Node::Object(
-                fields
-                    .iter()
-                    .map(|(key, item)| {
-                        let node = self.redact(
-                            hinted || name_hints_secret(key),
+                        self.redact(
+                            hinted,
                             item,
-                            mask.get(key).unwrap_or(&NULL),
-                        );
-                        (key.clone(), node)
+                            mask.get(index).unwrap_or(&NULL),
+                            shape.and_then(Shape::element),
+                        )
                     })
                     .collect(),
             ),
+            Value::Object(fields) => {
+                let is_map = shape.is_some_and(Shape::is_map);
+                let mut hidden_keys = 0_usize;
+                Node::Object(
+                    fields
+                        .iter()
+                        .map(|(key, item)| {
+                            let node = self.redact(
+                                hinted || name_hints_secret(key),
+                                item,
+                                mask.get(key).unwrap_or(&NULL),
+                                shape.and_then(|shape| shape.child(key)),
+                            );
+                            if is_map && self.hides_key(key) {
+                                hidden_keys += 1;
+                                (masked_key(hidden_keys), node)
+                            } else {
+                                (key.clone(), node)
+                            }
+                        })
+                        .collect(),
+                )
+            }
         }
     }
 
@@ -236,6 +266,15 @@ impl Redactor {
                 .iter()
                 .any(|secret| text.contains(secret.as_str()))
             || looks_like_credential(text)
+    }
+}
+
+/// Stand-in for the n-th hidden key of a map: `(masked)`, `(masked)#2`, …
+fn masked_key(nth: usize) -> String {
+    if nth == 1 {
+        format!("({})", labels::MASKED)
+    } else {
+        format!("({})#{nth}", labels::MASKED)
     }
 }
 
@@ -444,7 +483,10 @@ mod tests {
     }
 
     fn show(redactor: &Redactor, attrs: &[&str], value: &Value, mask: &Value) -> Node {
-        redactor.show(&path(attrs), value, mask).node().clone()
+        redactor
+            .show(&path(attrs), value, mask, None)
+            .node()
+            .clone()
     }
 
     #[test]

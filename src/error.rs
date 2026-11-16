@@ -44,6 +44,23 @@ pub enum Error {
         source: Box<toml::de::Error>,
     },
 
+    #[error("cannot read the schema file {}", path.display())]
+    ReadSchema {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+
+    #[error("invalid provider schema file {} (expected `terraform providers schema -json` output)", path.display())]
+    ParseSchema {
+        path: PathBuf,
+        #[source]
+        source: Box<serde_json::Error>,
+    },
+
+    #[error("unsupported provider schema format_version {0:?} (tfdiff understands 1.x)")]
+    UnsupportedSchemaVersion(String),
+
     #[error("unknown output format {0:?}")]
     UnknownFormat(String),
 

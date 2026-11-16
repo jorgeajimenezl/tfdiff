@@ -5,7 +5,7 @@ Status of the original spec. Checked items are implemented and tested; the rest 
 ## Done (foundation)
 
 - [x] Diff `before`/`after` per `resource_change`
-- [x] Match list elements by key: config override, then `name`; duplicates become `name#2`
+- [x] Match list elements by key: config override, then provider schema, then position; duplicates become `name#2`
 - [x] Never print values flagged in `before_sensitive`/`after_sensitive`; flagged blocks report only a count
 - [x] Mask copies of flagged values and credential-shaped strings
 - [x] Plan JSON kept in memory only; errors never quote the plan
@@ -17,15 +17,15 @@ Status of the original spec. Checked items are implemented and tested; the rest 
 - [x] `terraform_data` fixtures, secret-leak test, property tests for list matching
 - [x] clippy + fmt + tests in CI; release workflow for static Linux and Windows binaries
 
-## Next
-
 ### Schema-based key inference
-- [ ] `--schema <file>` reading `terraform providers schema -json`
-- [ ] Infer the key of each nested block from attributes named `name`, `key`, `id` (in that order of preference — to confirm)
-- [ ] Precedence: config override → schema → `name` fallback
-- [ ] Use the schema to tell sets from lists (sets have no order: never report `^v`)
-- [ ] Use the schema to tell maps from objects, then mask keys of sensitive maps in paths (known gap)
-- [ ] Trimmed real azurerm schema as a fixture
+- [x] `--schema <file>` reading `terraform providers schema -json`
+- [x] Infer the key of each nested block from attributes named `name`, `key`, `id` (in that order of preference)
+- [x] Precedence: config override → schema → position
+- [x] Use the schema to tell sets from lists (sets have no order: never report `^v`)
+- [x] Use the schema to tell maps from objects, then mask secret-looking map keys in paths and values
+- [x] Trimmed real azurerm schema as a fixture
+
+## Next
 
 ### Classification
 - [ ] Case-only differences (Azure resource IDs are case-insensitive): new class, not counted as real by gates
@@ -48,7 +48,7 @@ Status of the original spec. Checked items are implemented and tested; the rest 
 - [ ] Hints in every format (a field in the report, not renderer logic)
 
 ### Fixtures and tests
-- [ ] Hand-built sample azurerm plan (marked synthetic) covering case-only IDs, nested blocks, sensitive attributes
+- [ ] Extend `azurerm_synthetic.plan.json` (nested blocks done) with case-only IDs and sensitive attributes
 - [ ] Fixture with `resource_drift`
 - [ ] Fixture with JSON-encoded string attributes
 

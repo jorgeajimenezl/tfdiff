@@ -28,6 +28,11 @@ pub struct Cli {
     #[arg(short, long, value_name = "FILE")]
     pub config: Option<PathBuf>,
 
+    /// Provider schema (`terraform providers schema -json`), used to infer
+    /// list keys and to tell sets from lists.
+    #[arg(short, long, value_name = "FILE")]
+    pub schema: Option<PathBuf>,
+
     /// Fail unless the plan satisfies this expectation.
     #[arg(short, long, value_enum, value_name = "EXPECTATION")]
     pub expect: Option<Expect>,

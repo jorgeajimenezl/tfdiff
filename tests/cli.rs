@@ -11,14 +11,30 @@ fn fixture(name: &str) -> PathBuf {
         .join(format!("{name}.plan.json"))
 }
 
-fn tfdiff() -> Command {
+/// Keys the `terraform_data` fixture lists by `name`.
+const KEYED: &str = "tests/fixtures/keyed.toml";
+/// No list keys: everything is compared by position unless a schema says otherwise.
+const EMPTY: &str = "tests/fixtures/empty.toml";
+const SCHEMA: &str = "tests/fixtures/azurerm.schema.json";
+
+/// An explicit config keeps a developer's ./tfdiff.toml out of the tests.
+fn tfdiff_with(config: &str) -> Command {
     let mut command = Command::cargo_bin("tfdiff").expect("binary is built");
-    // Keep a developer's ./tfdiff.toml out of the tests.
     command
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .arg("--config")
-        .arg("tests/fixtures/empty.toml");
+        .arg(config);
     command
+}
+
+fn tfdiff() -> Command {
+    tfdiff_with(KEYED)
+}
+
+fn stdout(command: &mut Command) -> String {
+    let output = command.output().expect("tfdiff runs");
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8(output.stdout).expect("utf-8 output")
 }
 
 fn text(name: &str) -> String {
@@ -81,6 +97,128 @@ fn list_elements_are_matched_by_key() {
          \x20   ^v input.rules\n\
          \x20   ? output\n"
     );
+}
+
+#[test]
+fn lists_are_positional_without_config_or_schema() {
+    assert_eq!(
+        stdout(tfdiff_with(EMPTY).arg(fixture("list_change"))),
+        "tfdiff: +0 -0 -/+0 ~1 x0 =>0 ==0\n\
+         ~ terraform_data.app\n\
+         \x20   ~ input.rules[0].name: \"ssh\" -> \"dns\"\n\
+         \x20   ~ input.rules[0].port: 22 -> 53\n\
+         \x20   ~ input.rules[1].name: \"http\" -> \"https\"\n\
+         \x20   ~ input.rules[1].port: 80 -> 8443\n\
+         \x20   ~ input.rules[2].name: \"https\" -> \"ssh\"\n\
+         \x20   ~ input.rules[2].port: 443 -> 22\n\
+         \x20   ? output\n"
+    );
+}
+
+/// Lines of the report about `resource`, without the leading indentation.
+fn lines_of(report: &str, resource: &str) -> Vec<String> {
+    report
+        .lines()
+        .skip_while(|line| *line != format!("~ {resource}"))
+        .skip(1)
+        .take_while(|line| line.starts_with(' '))
+        .map(|line| line.trim_start().to_owned())
+        .collect()
+}
+
+#[test]
+fn schema_infers_keys_and_sets() {
+    let report = stdout(
+        tfdiff_with(EMPTY)
+            .arg(fixture("azurerm_synthetic"))
+            .args(["--schema", SCHEMA]),
+    );
+
+    // `security_rule` is a set of objects with a `name`: keyed, and its order is ignored.
+    let nsg = lines_of(&report, "azurerm_network_security_group.main");
+    assert_eq!(nsg[0], "~ security_rule[https].priority: 110 -> 115");
+    assert!(nsg[1].starts_with("- security_rule[http]: {"), "{nsg:?}");
+    assert!(nsg[2].starts_with("+ security_rule[dns]: {"), "{nsg:?}");
+    assert_eq!(
+        nsg[3..],
+        ["~ tags.env: \"dev\" -> \"prod\"", "+ tags.owner: \"net\""]
+    );
+
+    // Sets of strings pair by value; `dns_servers` is a real list and stays positional.
+    assert_eq!(
+        lines_of(&report, "azurerm_virtual_network.main"),
+        [
+            "+ address_space[0]: \"10.2.0.0/16\"",
+            "~ dns_servers[0]: \"10.0.0.4\" -> \"10.0.0.5\"",
+            "~ dns_servers[1]: \"10.0.0.5\" -> \"10.0.0.4\"",
+            "+ subnet[data].service_endpoints[0]: \"Microsoft.Sql\"",
+        ]
+    );
+
+    // `access_policy` is a list of objects without name, key or id: positional.
+    let vault = lines_of(&report, "azurerm_key_vault.main");
+    assert_eq!(
+        vault[0],
+        "~ access_policy[0].object_id: \"aaaa\" -> \"cccc\""
+    );
+    assert!(!report.contains("^v"), "{report}");
+}
+
+#[test]
+fn without_a_schema_the_same_plan_is_positional() {
+    let report = stdout(tfdiff_with(EMPTY).arg(fixture("azurerm_synthetic")));
+    assert!(
+        report.contains("~ security_rule[0].name: \"ssh\" -> \"dns\""),
+        "{report}"
+    );
+    assert!(
+        report.contains("~ subnet[0].name: \"apps\" -> \"data\""),
+        "{report}"
+    );
+    assert!(!report.contains("security_rule[https]"), "{report}");
+}
+
+#[test]
+fn config_overrides_the_schema_key() {
+    let dir = std::env::temp_dir().join(format!("tfdiff-schema-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let config = dir.join("tfdiff.toml");
+    std::fs::write(
+        &config,
+        "[list_keys]\n\"azurerm_network_security_group.security_rule\" = \"priority\"\n",
+    )
+    .expect("config written");
+
+    let report = stdout(
+        Command::cargo_bin("tfdiff")
+            .expect("binary is built")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .arg(fixture("azurerm_synthetic"))
+            .arg("--config")
+            .arg(&config)
+            .args(["--schema", SCHEMA]),
+    );
+    std::fs::remove_dir_all(&dir).expect("temp dir removed");
+    assert!(report.contains("- security_rule[110]: {"), "{report}");
+    assert!(report.contains("+ security_rule[115]: {"), "{report}");
+}
+
+#[test]
+fn bad_schema_exits_with_1() {
+    tfdiff()
+        .arg(fixture("noop"))
+        .args(["--schema", "does-not-exist.json"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("cannot read the schema file"));
+    // A plan is JSON, but not a provider schema of a supported version.
+    tfdiff()
+        .arg(fixture("noop"))
+        .arg("--schema")
+        .arg(fixture("noop"))
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("schema"));
 }
 
 #[test]

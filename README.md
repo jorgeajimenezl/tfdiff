@@ -14,12 +14,12 @@ tfdiff: +0 -0 -/+0 ~1 x0 =>0 ==0
     ? output
 ```
 
-Terraform's own diff for that plan marks every rule as changed, because it compares lists by position.
+Terraform's own diff for that plan marks every rule as changed, because it compares lists by position. tfdiff pairs the rules by `name` here because it was told to: by a provider schema (`--schema`) or by `tfdiff.toml`. See [List matching](#list-matching).
 
 ## Usage
 
 ```
-tfdiff [PLAN] [--format text|json] [--config FILE] [--expect no-destroy|only-moves|no-changes]
+tfdiff [PLAN] [--format text|json] [--config FILE] [--schema FILE] [--expect no-destroy|only-moves|no-changes]
 ```
 
 `PLAN` is a plan JSON file; standard input is read when it is omitted or `-`. The plan is only held in memory.
@@ -44,7 +44,18 @@ The JSON format (`schema_version: 1`) carries the same information with uncommon
 
 ### List matching
 
-Elements of a list of objects are paired by a key attribute, not by index. The key is `name` unless configured otherwise; duplicates become `name#2`, `name#3`. Lists of plain values are paired by value. Lists without a usable key fall back to positions.
+The plan does not say what identifies a list element, so tfdiff compares lists by position unless it is told better. For each list, the first of these that applies wins:
+
+1. **`tfdiff.toml`** names the key attribute of that list.
+2. **The provider schema** (`--schema`) declares the list. Elements with an attribute `name`, `key` or `id` (first one declared as a string or number) are paired by it. Sets are paired by key when they have one and by whole value otherwise, and their order is never reported.
+3. **Position.**
+
+Duplicate keys become `name#2`, `name#3`. When some element lacks the key, or its key is only known after apply, the list falls back to positions (a set, to whole values).
+
+```console
+$ terraform providers schema -json > schema.json
+$ terraform show -json plan.bin | tfdiff --schema schema.json
+```
 
 ```toml
 # tfdiff.toml — picked up from the working directory, or passed with --config
@@ -53,7 +64,9 @@ Elements of a list of objects are paired by a key attribute, not by index. The k
 "terraform_data.input.rules" = "port"
 ```
 
-The key is `"<resource type>.<attribute path>"`, the path without list positions.
+The key is `"<resource type>.<attribute path>"`, the path without list positions. In a list of plain values configured this way, elements are paired by value, whatever attribute is named.
+
+The schema also tells maps from blocks: a map key that equals a sensitive value or is shaped like a credential is printed as `(masked)`.
 
 ### Secrets
 
@@ -87,10 +100,11 @@ Error messages never quote the plan either.
 
 ```console
 $ cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-$ tests/fixtures/regen.sh    # rebuild the plan fixtures; needs terraform, no cloud access
+$ tests/fixtures/regen.sh           # rebuild the plan fixtures; needs terraform, no cloud access
+$ tests/fixtures/schema/regen.sh    # rebuild azurerm.schema.json; downloads the azurerm provider, needs jq
 ```
 
-Fixtures are real `terraform show -json` output generated from the `terraform_data` configs in `tests/fixtures/src/`. `tests/leak.rs` fails if any flagged or `CANARY`-marked value reaches any output of any format, so new fixtures and new formats are covered without extra work.
+Fixtures are real `terraform show -json` output generated from the `terraform_data` configs in `tests/fixtures/src/`, except `azurerm_synthetic.plan.json`, which is written by hand to exercise `azurerm.schema.json` (the real provider schema, trimmed to four resource types). `tests/leak.rs` fails if any flagged or `CANARY`-marked value reaches any output of any format, so new fixtures and new formats are covered without extra work.
 
 ### Adding an output format
 

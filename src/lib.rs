@@ -15,6 +15,7 @@ pub mod plan;
 pub mod redact;
 pub mod render;
 pub mod report;
+pub mod schema;
 
 use std::fs;
 use std::io::{Read, Write};
@@ -48,17 +49,22 @@ impl Outcome {
 ///
 /// # Errors
 ///
-/// Returns an [`Error`] when the plan or config cannot be read or parsed, or
+/// Returns an [`Error`] when the plan, config or schema cannot be read or parsed, or
 /// the report cannot be written.
 pub fn run(cli: &cli::Cli, stdin: &mut dyn Read, stdout: &mut dyn Write) -> Result<Outcome, Error> {
     let renderer =
         render::find(&cli.format).ok_or_else(|| Error::UnknownFormat(cli.format.clone()))?;
     let config = config::Config::discover(cli.config.as_deref())?;
+    let schemas = cli
+        .schema
+        .as_deref()
+        .map(schema::Schemas::from_file)
+        .transpose()?;
 
     let mut report = {
         let bytes = read_plan(cli.plan.as_deref(), stdin)?;
         let plan = plan::Plan::from_slice(&bytes)?;
-        diff::diff_plan(&plan, &config)
+        diff::diff_plan(&plan, &config, schemas.as_ref())
     };
     report.gate = cli.expect.map(|expect| gate::evaluate(expect, &report));
 

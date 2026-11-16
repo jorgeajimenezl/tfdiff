@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use crate::labels;
+
 /// One step into a value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Segment {
@@ -11,6 +13,8 @@ pub enum Segment {
     Key(String),
     /// List element identified by position.
     Index(usize),
+    /// Map key that must not be printed.
+    Masked,
 }
 
 /// Path from the resource root to a value, e.g. `input.rules[https].port`.
@@ -30,7 +34,7 @@ impl Path {
     pub fn attrs(&self) -> impl Iterator<Item = &str> {
         self.0.iter().filter_map(|segment| match segment {
             Segment::Attr(name) => Some(name.as_str()),
-            Segment::Key(_) | Segment::Index(_) => None,
+            Segment::Key(_) | Segment::Index(_) | Segment::Masked => None,
         })
     }
 
@@ -62,6 +66,7 @@ impl fmt::Display for Path {
                 Segment::Attr(name) => write!(f, "[{name:?}]")?,
                 Segment::Key(key) => write!(f, "[{key}]")?,
                 Segment::Index(index) => write!(f, "[{index}]")?,
+                Segment::Masked => write!(f, "[({})]", labels::MASKED)?,
             }
         }
         Ok(())
@@ -81,7 +86,11 @@ mod tests {
         path.push(Segment::Attr("ports".into()));
         path.push(Segment::Index(2));
         path.push(Segment::Attr("a.b/c".into()));
-        assert_eq!(path.to_string(), "input.rules[https].ports[2][\"a.b/c\"]");
+        path.push(Segment::Masked);
+        assert_eq!(
+            path.to_string(),
+            "input.rules[https].ports[2][\"a.b/c\"][(masked)]"
+        );
         assert_eq!(path.attr_path(), "input.rules.ports.a.b/c");
     }
 }

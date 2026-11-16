@@ -1,0 +1,3 @@
+[list_keys]
+"terraform_data.input.rules" = "name"
+"terraform_data.input.users" = "name"

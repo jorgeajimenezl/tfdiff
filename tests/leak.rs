@@ -16,6 +16,7 @@ use tfdiff::diff::diff_plan;
 use tfdiff::gate::{self, Expect};
 use tfdiff::plan::Plan;
 use tfdiff::render::registry;
+use tfdiff::schema::Schemas;
 
 const MARKER: &str = "CANARY";
 
@@ -90,7 +91,11 @@ fn assert_clean(output: &str, secrets: &BTreeSet<String>, context: &str) {
 }
 
 /// Renders `plan` with every format and every expectation.
-fn render_everything(plan_json: &[u8], config: &Config) -> Vec<(String, String)> {
+fn render_everything(
+    plan_json: &[u8],
+    config: &Config,
+    schemas: Option<&Schemas>,
+) -> Vec<(String, String)> {
     let plan = Plan::from_slice(plan_json).expect("plan parses");
     let mut outputs = Vec::new();
     for expect in [
@@ -99,7 +104,7 @@ fn render_everything(plan_json: &[u8], config: &Config) -> Vec<(String, String)>
         Some(Expect::OnlyMoves),
         Some(Expect::NoChanges),
     ] {
-        let mut report = diff_plan(&plan, config);
+        let mut report = diff_plan(&plan, config, schemas);
         report.gate = expect.map(|expect| gate::evaluate(expect, &report));
         outputs.push(("debug".to_owned(), format!("{report:?} {plan:?}")));
         for renderer in registry() {
@@ -118,17 +123,32 @@ fn render_everything(plan_json: &[u8], config: &Config) -> Vec<(String, String)>
 
 #[test]
 fn no_format_leaks_a_secret_from_any_fixture() {
+    let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let positional = Config::default();
+    let keyed = Config::parse(
+        &fs::read_to_string(fixtures_dir.join("keyed.toml")).expect("keyed config readable"),
+    )
+    .expect("valid config");
+    let schemas =
+        Schemas::from_file(&fixtures_dir.join("azurerm.schema.json")).expect("schema fixture");
     let mut checked_secrets = 0;
     for path in fixtures() {
         let bytes = fs::read(&path).expect("fixture readable");
         let secrets = secrets(&serde_json::from_slice(&bytes).expect("fixture is JSON"));
         checked_secrets += secrets.len();
-        for (format, output) in render_everything(&bytes, &Config::default()) {
-            assert_clean(
-                &output,
-                &secrets,
-                &format!("{} as {format}", path.display()),
-            );
+        // Positional, keyed by config, and keyed by schema.
+        for (config, schemas) in [
+            (&positional, None),
+            (&keyed, None),
+            (&positional, Some(&schemas)),
+        ] {
+            for (format, output) in render_everything(&bytes, config, schemas) {
+                assert_clean(
+                    &output,
+                    &secrets,
+                    &format!("{} as {format}", path.display()),
+                );
+            }
         }
     }
     assert!(
@@ -217,12 +237,77 @@ fn plan_with(change: &Value) -> Vec<u8> {
 }
 
 fn assert_synthetic_clean(change: &Value, config: &Config) {
+    assert_synthetic_clean_with(change, config, None);
+}
+
+fn assert_synthetic_clean_with(change: &Value, config: &Config, schemas: Option<&Schemas>) {
     let bytes = plan_with(change);
     let secrets = secrets(&serde_json::from_slice(&bytes).expect("JSON"));
     assert!(!secrets.is_empty());
-    for (format, output) in render_everything(&bytes, config) {
+    for (format, output) in render_everything(&bytes, config, schemas) {
         assert_clean(&output, &secrets, &format);
     }
+}
+
+/// Schema for the `example` type: `labels` is a map, `members` a set of
+/// objects without a key, `users` a list of objects with a `name`.
+fn example_schema() -> Schemas {
+    let bytes = serde_json::to_vec(&json!({
+        "format_version": "1.0",
+        "provider_schemas": {"registry.example/acme/example": {"resource_schemas": {"example": {"block": {
+            "attributes": {
+                "labels": {"type": ["map", "string"]},
+                "members": {"type": ["set", ["object", {"role": "string", "token": "string"}]]},
+                "users": {"type": ["list", ["object", {"name": "string", "role": "string"}]]},
+            },
+        }}}}},
+    }))
+    .expect("serializable");
+    Schemas::from_slice(&bytes, Path::new("test")).expect("valid schema")
+}
+
+#[test]
+fn secret_map_keys_never_appear_in_paths_or_values() {
+    let schemas = example_schema();
+    // The flagged value is reused as a map key; a credential-shaped key is planted too.
+    let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJDQU5BUlkifQ.CANARYsignatureCANARYsignature";
+    for after_labels in [json!({"CANARY-flagged-value": "b", jwt: "b"}), Value::Null] {
+        assert_synthetic_clean_with(
+            &json!({
+                "actions": ["update"],
+                "before": {"api_key": "CANARY-flagged-value", "labels": {"CANARY-flagged-value": "a", jwt: "a", "env": "dev"}},
+                "after": {"api_key": "CANARY-flagged-value", "labels": after_labels},
+                "before_sensitive": {"api_key": true},
+                "after_sensitive": {"api_key": true},
+                "after_unknown": {},
+            }),
+            &Config::default(),
+            Some(&schemas),
+        );
+    }
+}
+
+#[test]
+fn schema_inferred_keys_and_set_values_never_leak() {
+    let schemas = example_schema();
+    assert_synthetic_clean_with(
+        &json!({
+            "actions": ["update"],
+            "before": {
+                "users": [{"name": "CANARY-key-a", "role": "r1"}, {"name": "CANARY-key-b", "role": "r1"}],
+                "members": [{"role": "r1", "token": "CANARY-token-one"}, {"role": "r2", "token": "CANARY-token-two"}],
+            },
+            "after": {
+                "users": [{"name": "CANARY-key-b", "role": "r2"}, {"name": "CANARY-key-c", "role": "r1"}],
+                "members": [{"role": "r3", "token": "CANARY-token-two"}, {"role": "r1", "token": "CANARY-token-three"}],
+            },
+            "before_sensitive": {"users": [{"name": true}, {"name": true}], "members": [{"token": true}, {"token": true}]},
+            "after_sensitive": {"users": [{"name": true}, {"name": true}], "members": [{"token": true}, {"token": true}]},
+            "after_unknown": {},
+        }),
+        &Config::default(),
+        Some(&schemas),
+    );
 }
 
 #[test]
@@ -236,7 +321,7 @@ fn sensitive_list_keys_never_appear_in_paths() {
             "after_sensitive": {"users": [{"name": true}, {"name": true}]},
             "after_unknown": {},
         }),
-        &Config::default(),
+        &Config::parse("[list_keys]\n\"example.users\" = \"name\"\n").expect("valid config"),
     );
 }
 

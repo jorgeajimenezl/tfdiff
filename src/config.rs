@@ -18,9 +18,6 @@ use crate::error::Error;
 /// File looked up in the working directory when `--config` is not given.
 pub const DEFAULT_FILE: &str = "tfdiff.toml";
 
-/// Attribute used to match list elements when nothing more specific is configured.
-pub const DEFAULT_LIST_KEY: &str = "name";
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -62,12 +59,12 @@ impl Config {
         toml::from_str(text)
     }
 
-    /// Key attribute for the list at `attr_path` (dot-joined attribute names,
-    /// no indexes) of `resource_type`.
-    pub fn list_key(&self, resource_type: &str, attr_path: &str) -> &str {
+    /// Configured key attribute for the list at `attr_path` (dot-joined
+    /// attribute names, no indexes) of `resource_type`, if any.
+    pub fn list_key(&self, resource_type: &str, attr_path: &str) -> Option<&str> {
         self.list_keys
             .get(&format!("{resource_type}.{attr_path}"))
-            .map_or(DEFAULT_LIST_KEY, String::as_str)
+            .map(String::as_str)
     }
 }
 
@@ -76,11 +73,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn override_wins_over_default() {
+    fn only_configured_lists_have_a_key() {
         let config =
             Config::parse("[list_keys]\n\"terraform_data.input.rules\" = \"port\"\n").unwrap();
-        assert_eq!(config.list_key("terraform_data", "input.rules"), "port");
-        assert_eq!(config.list_key("terraform_data", "input.other"), "name");
+        assert_eq!(
+            config.list_key("terraform_data", "input.rules"),
+            Some("port")
+        );
+        assert_eq!(config.list_key("terraform_data", "input.other"), None);
     }
 
     #[test]

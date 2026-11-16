@@ -25,6 +25,9 @@ pub struct ResourceChange {
     pub mode: String,
     #[serde(rename = "type", default)]
     pub resource_type: String,
+    /// Fully qualified provider, e.g. `registry.terraform.io/hashicorp/azurerm`.
+    #[serde(default)]
+    pub provider_name: Option<String>,
     pub change: Change,
 }
 
