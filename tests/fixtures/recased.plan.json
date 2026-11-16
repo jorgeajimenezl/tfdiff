@@ -1,0 +1,73 @@
+{
+  "//": "SYNTHETIC: written by hand in the shape of `terraform show -json`; a plan whose only difference is the letter case of an Azure resource ID, plus drift.",
+  "format_version": "1.2",
+  "terraform_version": "1.15.9",
+  "resource_changes": [
+    {
+      "address": "azurerm_application_gateway.recased",
+      "mode": "managed",
+      "type": "azurerm_application_gateway",
+      "name": "recased",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "id": "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.Network/applicationGateways/agw",
+          "location": "westeurope",
+          "resource_group_name": "rg-net",
+          "name": "agw",
+          "firewall_policy_id": "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/waf",
+          "tags": {
+            "env": "Prod"
+          }
+        },
+        "after": {
+          "id": "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.Network/applicationGateways/agw",
+          "location": "westeurope",
+          "resource_group_name": "rg-net",
+          "name": "agw",
+          "firewall_policy_id": "/subscriptions/0000/resourcegroups/rg-net/providers/microsoft.network/applicationgatewaywebapplicationfirewallpolicies/waf",
+          "tags": {
+            "env": "Prod"
+          }
+        },
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "resource_drift": [
+    {
+      "address": "azurerm_key_vault.main",
+      "mode": "managed",
+      "type": "azurerm_key_vault",
+      "name": "main",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "id": "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.KeyVault/vaults/kv-app",
+          "name": "kv-app",
+          "tags": {
+            "env": "Prod"
+          }
+        },
+        "after": {
+          "id": "/subscriptions/0000/resourceGroups/RG-Net/providers/Microsoft.KeyVault/vaults/kv-app",
+          "name": "kv-app",
+          "tags": {
+            "env": "prod"
+          }
+        },
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    }
+  ]
+}

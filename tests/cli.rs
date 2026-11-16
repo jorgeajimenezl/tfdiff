@@ -57,7 +57,7 @@ fn json(name: &str) -> serde_json::Value {
 fn create() {
     assert_eq!(
         text("create"),
-        "tfdiff: +1 -0 -/+0 ~0 x0 =>0 ==0\n+ terraform_data.app\n"
+        "tfdiff: +1 -0 -/+0 ~0 x0 =>0 ==0 %0\n+ terraform_data.app\n"
     );
 }
 
@@ -65,20 +65,20 @@ fn create() {
 fn destroy() {
     assert_eq!(
         text("destroy"),
-        "tfdiff: +0 -1 -/+0 ~0 x0 =>0 ==0\n- terraform_data.app\n"
+        "tfdiff: +0 -1 -/+0 ~0 x0 =>0 ==0 %0\n- terraform_data.app\n"
     );
 }
 
 #[test]
 fn noop() {
-    assert_eq!(text("noop"), "tfdiff: +0 -0 -/+0 ~0 x0 =>0 ==1\n");
+    assert_eq!(text("noop"), "tfdiff: +0 -0 -/+0 ~0 x0 =>0 ==1 %0\n");
 }
 
 #[test]
 fn list_reorder_is_one_line_not_positional_churn() {
     assert_eq!(
         text("list_reorder"),
-        "tfdiff: +0 -0 -/+0 ~1 x0 =>0 ==0\n\
+        "tfdiff: +0 -0 -/+0 ~1 x0 =>0 ==0 %0\n\
          ~ terraform_data.app\n\
          \x20   ^v input.rules\n\
          \x20   ? output\n"
@@ -89,7 +89,7 @@ fn list_reorder_is_one_line_not_positional_churn() {
 fn list_elements_are_matched_by_key() {
     assert_eq!(
         text("list_change"),
-        "tfdiff: +0 -0 -/+0 ~1 x0 =>0 ==0\n\
+        "tfdiff: +0 -0 -/+0 ~1 x0 =>0 ==0 %0\n\
          ~ terraform_data.app\n\
          \x20   ~ input.rules[https].port: 443 -> 8443\n\
          \x20   - input.rules[http]: {access=\"Allow\", name=\"http\", port=80}\n\
@@ -103,7 +103,7 @@ fn list_elements_are_matched_by_key() {
 fn lists_are_positional_without_config_or_schema() {
     assert_eq!(
         stdout(tfdiff_with(EMPTY).arg(fixture("list_change"))),
-        "tfdiff: +0 -0 -/+0 ~1 x0 =>0 ==0\n\
+        "tfdiff: +0 -0 -/+0 ~1 x0 =>0 ==0 %0\n\
          ~ terraform_data.app\n\
          \x20   ~ input.rules[0].name: \"ssh\" -> \"dns\"\n\
          \x20   ~ input.rules[0].port: 22 -> 53\n\
@@ -225,7 +225,7 @@ fn bad_schema_exits_with_1() {
 fn duplicate_keys_are_numbered() {
     assert_eq!(
         text("dup_keys"),
-        "tfdiff: +0 -0 -/+0 ~1 x0 =>0 ==0\n\
+        "tfdiff: +0 -0 -/+0 ~1 x0 =>0 ==0 %0\n\
          ~ terraform_data.app\n\
          \x20   ~ input.rules[web#2].port: 443 -> 8443\n\
          \x20   ^v input.rules\n\
@@ -237,7 +237,7 @@ fn duplicate_keys_are_numbered() {
 fn moved_resource_shows_previous_address() {
     assert_eq!(
         text("moved"),
-        "tfdiff: +0 -0 -/+0 ~0 x0 =>1 ==1\n\
+        "tfdiff: +0 -0 -/+0 ~0 x0 =>1 ==1 %0\n\
          => terraform_data.new\n\
          \x20   < terraform_data.old\n"
     );
@@ -247,7 +247,7 @@ fn moved_resource_shows_previous_address() {
 fn recreation_names_the_forcing_path() {
     assert_eq!(
         text("recreate"),
-        "tfdiff: +0 -0 -/+1 ~0 x0 =>0 ==0\n\
+        "tfdiff: +0 -0 -/+1 ~0 x0 =>0 ==0 %0\n\
          -/+ terraform_data.app\n\
          \x20   ! triggers_replace\n\
          \x20   ? id\n\
@@ -260,7 +260,7 @@ fn recreation_names_the_forcing_path() {
 fn sensitive_values_are_masked_and_blocks_only_counted() {
     assert_eq!(
         text("sensitive"),
-        "tfdiff: +0 -0 -/+0 ~2 x0 =>0 ==0\n\
+        "tfdiff: +0 -0 -/+0 ~2 x0 =>0 ==0 %0\n\
          ~ terraform_data.block\n\
          \x20   ~ input: (masked: 2) -> (masked: 3)\n\
          \x20   ? output\n\
@@ -278,10 +278,109 @@ fn sensitive_values_are_masked_and_blocks_only_counted() {
 fn unknown_after_apply() {
     assert_eq!(
         text("unknown"),
-        "tfdiff: +0 -0 -/+0 ~1 x0 =>0 ==0\n\
+        "tfdiff: +0 -0 -/+0 ~1 x0 =>0 ==0 %0\n\
          ~ terraform_data.app\n\
          \x20   ? input\n\
          \x20   ? output\n"
+    );
+}
+
+const WAF_ID: &str = "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/waf";
+
+#[test]
+fn azure_ids_that_differ_only_in_case_are_their_own_class() {
+    let report = json("recased");
+    assert_eq!(
+        report["resources"][0]["changes"],
+        serde_json::json!([{
+            "path": "firewall_policy_id",
+            "class": "recased",
+            "op": "altered",
+            "before": WAF_ID,
+            "after": WAF_ID.replace("resourceGroups", "resourcegroups")
+                .replace("Microsoft.Network", "microsoft.network")
+                .replace(
+                    "applicationGatewayWebApplicationFirewallPolicies",
+                    "applicationgatewaywebapplicationfirewallpolicies"
+                ),
+        }])
+    );
+    let lines = lines_of(&text("recased"), "azurerm_application_gateway.recased");
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].starts_with("Aa firewall_policy_id: "), "{lines:?}");
+}
+
+#[test]
+fn a_recased_id_that_forces_the_recreation_is_flagged() {
+    let output = tfdiff_with(EMPTY)
+        .arg(fixture("azurerm_synthetic"))
+        .args(["--format", "json"])
+        .output()
+        .expect("tfdiff runs");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let resource = report["resources"]
+        .as_array()
+        .expect("resources")
+        .iter()
+        .find(|resource| resource["action"] == "respawn")
+        .expect("the recreated resource");
+    assert_eq!(resource["forced_by"], serde_json::json!(["subnet_id"]));
+    let forcing: Vec<_> = resource["changes"]
+        .as_array()
+        .expect("changes")
+        .iter()
+        .filter(|change| change["forcing"] == true)
+        .map(|change| (change["path"].as_str(), change["class"].as_str()))
+        .collect();
+    assert_eq!(forcing, [(Some("subnet_id"), Some("recased"))]);
+
+    let report = stdout(tfdiff_with(EMPTY).arg(fixture("azurerm_synthetic")));
+    assert!(report.contains("\n    Aa! subnet_id: "), "{report}");
+}
+
+#[test]
+fn only_azure_ids_are_compared_without_case() {
+    // The drifted tag went from "Prod" to "prod": a real difference.
+    let report = json("recased");
+    let changes = &report["drift"][0]["changes"];
+    assert_eq!(changes[0]["path"], "id");
+    assert_eq!(changes[0]["class"], "recased");
+    assert_eq!(changes[1]["path"], "tags.env");
+    assert_eq!(changes[1]["class"], "effective");
+}
+
+#[test]
+fn drift_is_reported_apart_from_the_plan() {
+    assert_eq!(
+        stdout(tfdiff_with(EMPTY).arg(fixture("drift"))),
+        "tfdiff: +2 -0 -/+0 ~0 x0 =>0 ==0 %2\n\
+         + local_file.notes\n\
+         + local_sensitive_file.token\n\
+         % - local_file.notes\n\
+         % - local_sensitive_file.token\n"
+    );
+    let report = json("drift");
+    assert_eq!(report["totals"]["drifted"], 2);
+    assert_eq!(report["drift"][0]["address"], "local_file.notes");
+    assert_eq!(report["drift"][0]["action"], "teardown");
+    // Plans without drift have no such section.
+    assert!(json("noop").get("drift").is_none());
+}
+
+#[test]
+fn drifted_secrets_are_masked() {
+    let report = stdout(tfdiff_with(EMPTY).arg(fixture("azurerm_synthetic")));
+    let drift: Vec<&str> = report
+        .lines()
+        .skip_while(|line| *line != "% ~ azurerm_storage_account.logs")
+        .skip(1)
+        .collect();
+    assert_eq!(
+        drift,
+        [
+            "    ~ primary_access_key: (masked) -> (masked)",
+            "    ~ primary_blob_endpoint: (masked) -> (masked)",
+        ]
     );
 }
 
@@ -325,7 +424,7 @@ fn reads_the_plan_from_stdin() {
         .expect("fixture exists")
         .assert()
         .success()
-        .stdout("tfdiff: +0 -0 -/+0 ~0 x0 =>0 ==1\n");
+        .stdout("tfdiff: +0 -0 -/+0 ~0 x0 =>0 ==1 %0\n");
 }
 
 #[test]
@@ -359,6 +458,13 @@ const GATES: &[(&str, &str, i32)] = &[
     ("no-changes", "list_change", 2),
     ("no-changes", "create", 2),
     ("no-changes", "unknown", 3),
+    // An update is planned, but only the letter case of an Azure ID differs.
+    ("no-changes", "recased", 3),
+    ("only-moves", "recased", 3),
+    ("no-destroy", "recased", 0),
+    // Drift is what happened, not what the plan does: only the plan is judged.
+    ("no-destroy", "drift", 0),
+    ("no-changes", "drift", 2),
     ("only-moves", "noop", 0),
     ("only-moves", "moved", 0),
     ("only-moves", "list_reorder", 2),

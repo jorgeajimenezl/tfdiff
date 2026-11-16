@@ -65,7 +65,10 @@ fn flagged(value: &Value, mask: &Value, out: &mut BTreeSet<String>) {
 /// Every string in the plan that must never be printed.
 fn secrets(plan: &Value) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
-    for resource in plan["resource_changes"].as_array().into_iter().flatten() {
+    let resources = ["resource_changes", "resource_drift"]
+        .into_iter()
+        .flat_map(|section| plan[section].as_array().into_iter().flatten());
+    for resource in resources {
         let change = &resource["change"];
         flagged(&change["before"], &change["before_sensitive"], &mut found);
         flagged(&change["after"], &change["after_sensitive"], &mut found);

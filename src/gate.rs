@@ -40,8 +40,9 @@ pub enum Verdict {
     Upheld,
     /// The plan contradicts the expectation.
     Breached,
-    /// Nothing contradicts the expectation, but values only known after apply
-    /// mean it cannot be proven either.
+    /// Nothing contradicts the expectation, but it cannot be proven either:
+    /// some values are only known after apply, or an update is planned whose
+    /// differences are only in letter case.
     Undetermined,
 }
 
@@ -130,14 +131,16 @@ fn judge(expect: Expect, resource: &ResourceReport) -> Finding {
 
 /// Whether the resource itself changes, ignoring its address.
 fn attribute_finding(resource: &ResourceReport) -> Finding {
-    let only_unknowns = !resource.changes.is_empty()
+    // Unknown values may turn out equal, and a re-cased value is the same to
+    // the provider; but Terraform still plans an update, so neither is proof.
+    let nothing_effective = !resource.changes.is_empty()
         && resource
             .changes
             .iter()
-            .all(|change| change.class == Class::Undetermined);
+            .all(|change| matches!(change.class, Class::Undetermined | Class::Recased));
     match resource.action {
         Action::Steady if resource.changes.is_empty() => Finding::Fine,
-        Action::Steady | Action::Mutate if only_unknowns => Finding::Unprovable,
+        Action::Steady | Action::Mutate if nothing_effective => Finding::Unprovable,
         _ => Finding::Breach,
     }
 }
@@ -160,6 +163,7 @@ mod tests {
                     path: "p".into(),
                     class,
                     op: Op::Altered,
+                    forcing: false,
                     before: None,
                     after: None,
                 })
@@ -168,12 +172,85 @@ mod tests {
     }
 
     fn verdict(expect: Expect, resources: Vec<ResourceReport>) -> Verdict {
+        verdict_with_drift(expect, resources, Vec::new())
+    }
+
+    fn verdict_with_drift(
+        expect: Expect,
+        resources: Vec<ResourceReport>,
+        drift: Vec<ResourceReport>,
+    ) -> Verdict {
         let report = Report {
             totals: Totals::default(),
             resources,
+            drift,
             gate: None,
         };
         evaluate(expect, &report).verdict
+    }
+
+    #[test]
+    fn recased_only_updates_cannot_be_proven() {
+        for expect in [Expect::OnlyMoves, Expect::NoChanges] {
+            assert_eq!(
+                verdict(
+                    expect,
+                    vec![resource(Action::Mutate, false, &[Class::Recased])]
+                ),
+                Verdict::Undetermined
+            );
+            assert_eq!(
+                verdict(
+                    expect,
+                    vec![resource(
+                        Action::Mutate,
+                        false,
+                        &[Class::Recased, Class::Undetermined]
+                    )]
+                ),
+                Verdict::Undetermined
+            );
+            assert_eq!(
+                verdict(
+                    expect,
+                    vec![resource(
+                        Action::Mutate,
+                        false,
+                        &[Class::Recased, Class::Effective]
+                    )]
+                ),
+                Verdict::Breached
+            );
+            // A recreation is a recreation, whatever forced it.
+            assert_eq!(
+                verdict(
+                    expect,
+                    vec![resource(Action::Respawn, false, &[Class::Recased])]
+                ),
+                Verdict::Breached
+            );
+        }
+        assert_eq!(
+            verdict(
+                Expect::NoDestroy,
+                vec![resource(Action::Respawn, false, &[Class::Recased])]
+            ),
+            Verdict::Breached
+        );
+    }
+
+    #[test]
+    fn drift_never_affects_a_gate() {
+        for expect in [Expect::NoDestroy, Expect::OnlyMoves, Expect::NoChanges] {
+            let drift = vec![
+                resource(Action::Teardown, false, &[]),
+                resource(Action::Mutate, false, &[Class::Effective]),
+            ];
+            assert_eq!(
+                verdict_with_drift(expect, Vec::new(), drift),
+                Verdict::Upheld
+            );
+        }
     }
 
     #[test]

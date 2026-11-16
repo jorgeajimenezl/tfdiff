@@ -15,6 +15,9 @@ pub const STEADY: &str = "steady";
 
 pub const EFFECTIVE: &str = "effective";
 pub const UNDETERMINED: &str = "undetermined";
+pub const RECASED: &str = "recased";
+
+pub const DRIFTED: &str = "drifted";
 
 pub const GAINED: &str = "gained";
 pub const DROPPED: &str = "dropped";
@@ -37,6 +40,8 @@ pub const ALL: &[&str] = &[
     STEADY,
     EFFECTIVE,
     UNDETERMINED,
+    RECASED,
+    DRIFTED,
     GAINED,
     DROPPED,
     ALTERED,

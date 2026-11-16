@@ -364,6 +364,133 @@
         "before_sensitive": {},
         "after_sensitive": {}
       }
+    },
+    {
+      "address": "azurerm_application_gateway.recased",
+      "mode": "managed",
+      "type": "azurerm_application_gateway",
+      "name": "recased",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "id": "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.Network/applicationGateways/agw",
+          "location": "westeurope",
+          "resource_group_name": "rg-net",
+          "name": "agw",
+          "firewall_policy_id": "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/waf",
+          "tags": {
+            "env": "Prod"
+          }
+        },
+        "after": {
+          "id": "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.Network/applicationGateways/agw",
+          "location": "westeurope",
+          "resource_group_name": "rg-net",
+          "name": "agw",
+          "firewall_policy_id": "/subscriptions/0000/resourcegroups/rg-net/providers/microsoft.network/applicationgatewaywebapplicationfirewallpolicies/waf",
+          "tags": {
+            "env": "Prod"
+          }
+        },
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "azurerm_subnet_network_security_group_association.apps",
+      "mode": "managed",
+      "type": "azurerm_subnet_network_security_group_association",
+      "name": "apps",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": [
+          "delete",
+          "create"
+        ],
+        "before": {
+          "id": "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-app/subnets/apps",
+          "network_security_group_id": "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.Network/networkSecurityGroups/nsg-app",
+          "subnet_id": "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-app/subnets/apps"
+        },
+        "after": {
+          "network_security_group_id": "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.Network/networkSecurityGroups/nsg-app",
+          "subnet_id": "/subscriptions/0000/resourceGroups/RG-NET/providers/Microsoft.Network/virtualNetworks/vnet-app/subnets/apps"
+        },
+        "after_unknown": {
+          "id": true
+        },
+        "before_sensitive": {},
+        "after_sensitive": {},
+        "replace_paths": [
+          [
+            "subnet_id"
+          ]
+        ]
+      }
+    }
+  ],
+  "resource_drift": [
+    {
+      "address": "azurerm_key_vault.main",
+      "mode": "managed",
+      "type": "azurerm_key_vault",
+      "name": "main",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "id": "/subscriptions/0000/resourceGroups/rg-net/providers/Microsoft.KeyVault/vaults/kv-app",
+          "name": "kv-app",
+          "tags": {
+            "env": "Prod"
+          }
+        },
+        "after": {
+          "id": "/subscriptions/0000/resourceGroups/RG-Net/providers/Microsoft.KeyVault/vaults/kv-app",
+          "name": "kv-app",
+          "tags": {
+            "env": "prod"
+          }
+        },
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "azurerm_storage_account.logs",
+      "mode": "managed",
+      "type": "azurerm_storage_account",
+      "name": "logs",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "before": {
+          "name": "stlogs",
+          "primary_access_key": "rotated-outside-terraform-1",
+          "primary_blob_endpoint": "https://stlogs.blob.core.windows.net/?sig=CANARY-drift-before"
+        },
+        "after": {
+          "name": "stlogs",
+          "primary_access_key": "rotated-outside-terraform-2",
+          "primary_blob_endpoint": "https://stlogs.blob.core.windows.net/?sig=CANARY-drift-after"
+        },
+        "after_unknown": {},
+        "before_sensitive": {
+          "primary_access_key": true
+        },
+        "after_sensitive": {
+          "primary_access_key": true
+        }
+      }
     }
   ]
 }

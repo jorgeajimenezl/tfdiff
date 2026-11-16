@@ -30,6 +30,15 @@ impl Path {
         self.0.pop();
     }
 
+    /// True when `prefix` leads to this location or to one that contains it.
+    pub fn starts_with(&self, prefix: &Self) -> bool {
+        self.0.starts_with(&prefix.0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Attribute names along the path, skipping list positions.
     pub fn attrs(&self) -> impl Iterator<Item = &str> {
         self.0.iter().filter_map(|segment| match segment {
@@ -92,5 +101,25 @@ mod tests {
             "input.rules[https].ports[2][\"a.b/c\"][(masked)]"
         );
         assert_eq!(path.attr_path(), "input.rules.ports.a.b/c");
+    }
+
+    #[test]
+    fn prefixes() {
+        let path = |segments: &[Segment]| {
+            let mut path = Path::default();
+            for segment in segments {
+                path.push(segment.clone());
+            }
+            path
+        };
+        let rules = path(&[Segment::Attr("rules".into())]);
+        let first = path(&[Segment::Attr("rules".into()), Segment::Index(0)]);
+        let second = path(&[Segment::Attr("rules".into()), Segment::Index(1)]);
+        assert!(first.starts_with(&rules));
+        assert!(first.starts_with(&first));
+        assert!(!rules.starts_with(&first));
+        assert!(!first.starts_with(&second));
+        assert!(first.starts_with(&Path::default()));
+        assert!(Path::default().is_empty() && !rules.is_empty());
     }
 }

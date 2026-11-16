@@ -25,13 +25,17 @@ Status of the original spec. Checked items are implemented and tested; the rest 
 - [x] Use the schema to tell maps from objects, then mask secret-looking map keys in paths and values
 - [x] Trimmed real azurerm schema as a fixture
 
+### Classification
+- [x] Case-only differences in Azure resource IDs: class `recased`, behind a `provider::Provider` registry
+- [x] Flag differences that force a replacement (`forcing`; `Aa!` in text for case-only ones)
+- [x] Drift: read `resource_drift` and report it in its own section
+- [x] Gates: an update with only case-only differences is undetermined; drift has no effect
+
 ## Next
 
-### Classification
-- [ ] Case-only differences (Azure resource IDs are case-insensitive): new class, not counted as real by gates
-- [ ] Flag case-only differences that still force a replacement (path is in `replace_paths`)
-- [ ] Drift: read `resource_drift` and report it as its own class
-- [ ] Decide how each new class affects each gate (case-only → undetermined or upheld?)
+### Classification follow-ups
+- [ ] Re-cased IDs inside sets without a key (paired by whole value today: shows as removed + added)
+- [ ] Long values are cut at 120 characters, which can hide where two re-cased IDs differ
 
 ### JSON-encoded string attributes
 - [ ] Detect strings that hold JSON (policies, `jsonencode(...)` bodies) and diff inside them
@@ -48,8 +52,8 @@ Status of the original spec. Checked items are implemented and tested; the rest 
 - [ ] Hints in every format (a field in the report, not renderer logic)
 
 ### Fixtures and tests
-- [ ] Extend `azurerm_synthetic.plan.json` (nested blocks done) with case-only IDs and sensitive attributes
-- [ ] Fixture with `resource_drift`
+- [x] Extend `azurerm_synthetic.plan.json` (nested blocks done) with case-only IDs and sensitive attributes
+- [x] Fixture with `resource_drift` (`drift`: real, from `hashicorp/local`)
 - [ ] Fixture with JSON-encoded string attributes
 
 ## Housekeeping

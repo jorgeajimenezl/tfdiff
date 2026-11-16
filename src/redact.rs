@@ -150,7 +150,8 @@ impl Redactor {
     /// Collects every string flagged sensitive in the plan.
     pub fn from_plan(plan: &Plan) -> Self {
         let mut tainted = HashSet::new();
-        for resource in &plan.resource_changes {
+        // Drift carries its own values and flags; a secret may appear only there.
+        for resource in plan.resource_changes.iter().chain(&plan.resource_drift) {
             let change = &resource.change;
             // A value is treated as secret if either side flags its position:
             // an attribute that is sensitive now most likely held a secret before.

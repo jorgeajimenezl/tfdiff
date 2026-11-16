@@ -7,7 +7,9 @@
 //!             x  forgotten    => moved        ==  untouched (summary line only)
 //! attributes  +  added        -  removed      ~   changed     ^v reordered
 //!             ?  known only after apply       !   forces the recreation
+//!             Aa differs only in letter case  Aa! the same, and forces the recreation
 //!             <  previous address
+//! drift       %  before a resource sigil: changed outside Terraform
 //! ```
 
 use std::fmt::Write as _;
@@ -33,7 +35,7 @@ impl Renderer for Text {
         let totals = report.totals;
         writeln!(
             out,
-            "tfdiff: +{} -{} -/+{} ~{} x{} =>{} =={}",
+            "tfdiff: +{} -{} -/+{} ~{} x{} =>{} =={} %{}",
             totals.provision,
             totals.teardown,
             totals.respawn,
@@ -41,9 +43,13 @@ impl Renderer for Text {
             totals.detach,
             totals.rehome,
             totals.steady,
+            totals.drifted,
         )?;
         for resource in &report.resources {
-            write_resource(resource, out)?;
+            write_resource(resource, "", out)?;
+        }
+        for resource in &report.drift {
+            write_resource(resource, "% ", out)?;
         }
         if let Some(gate) = &report.gate {
             write!(out, "[{}] {}", gate.expect.name(), gate.verdict.label())?;
@@ -56,7 +62,11 @@ impl Renderer for Text {
     }
 }
 
-fn write_resource(resource: &ResourceReport, out: &mut dyn io::Write) -> io::Result<()> {
+fn write_resource(
+    resource: &ResourceReport,
+    prefix: &str,
+    out: &mut dyn io::Write,
+) -> io::Result<()> {
     let sigil = match resource.action {
         Action::Provision => "+",
         Action::Teardown => "-",
@@ -65,7 +75,7 @@ fn write_resource(resource: &ResourceReport, out: &mut dyn io::Write) -> io::Res
         Action::Steady if resource.previous_address.is_some() => "=>",
         _ => "~",
     };
-    writeln!(out, "{sigil} {}", resource.address)?;
+    writeln!(out, "{prefix}{sigil} {}", resource.address)?;
     if let Some(previous) = &resource.previous_address {
         writeln!(out, "{INDENT}< {previous}")?;
     }
@@ -85,6 +95,13 @@ fn change_line(change: &AttrChange) -> String {
     }
     let before = change.before.as_ref().map(|shown| value(shown.node()));
     let after = change.after.as_ref().map(|shown| value(shown.node()));
+    if change.class == Class::Recased {
+        let sigil = if change.forcing { "Aa!" } else { "Aa" };
+        return match (before, after) {
+            (Some(before), Some(after)) => format!("{sigil} {path}: {before} -> {after}"),
+            _ => format!("{sigil} {path}"),
+        };
+    }
     match (change.op, before, after) {
         (Op::Shuffled, ..) => format!("^v {path}"),
         (Op::Gained, _, Some(after)) => format!("+ {path}: {after}"),

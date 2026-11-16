@@ -12,6 +12,10 @@ pub struct Report {
     pub totals: Totals,
     /// Resources that change or move, in plan order. Untouched resources are only counted.
     pub resources: Vec<ResourceReport>,
+    /// Resources changed outside Terraform since the last apply. This is what
+    /// the refresh found, not what the plan will do.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub drift: Vec<ResourceReport>,
     /// Outcome of `--expect`, when requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<GateResult>,
@@ -44,10 +48,21 @@ pub struct AttrChange {
     pub path: String,
     pub class: Class,
     pub op: Op,
+    /// The difference is at or under a path that forces the recreation.
+    #[serde(skip_serializing_if = "is_false")]
+    pub forcing: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub before: Option<Shown>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub after: Option<Shown>,
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "signature required by serde"
+)]
+fn is_false(flag: &bool) -> bool {
+    !*flag
 }
 
 /// What happens to a resource.
@@ -103,6 +118,9 @@ pub enum Class {
     Effective,
     /// The new value is only known after apply.
     Undetermined,
+    /// Both values are known and differ only in letter case, in a value the
+    /// provider compares without regard to case.
+    Recased,
 }
 
 impl Class {
@@ -110,6 +128,7 @@ impl Class {
         match self {
             Self::Effective => labels::EFFECTIVE,
             Self::Undetermined => labels::UNDETERMINED,
+            Self::Recased => labels::RECASED,
         }
     }
 }
@@ -161,6 +180,8 @@ pub struct Totals {
     /// Moved resources; these are also counted under their action.
     pub rehome: usize,
     pub steady: usize,
+    /// Resources changed outside Terraform; not part of the counts above.
+    pub drifted: usize,
 }
 
 impl Totals {
@@ -189,6 +210,7 @@ impl Serialize for Totals {
             (labels::DETACH, self.detach),
             (labels::REHOME, self.rehome),
             (labels::STEADY, self.steady),
+            (labels::DRIFTED, self.drifted),
         ];
         let mut map = serializer.serialize_map(Some(entries.len()))?;
         for (label, count) in entries {

@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use crate::config::Config;
 use crate::plan::{Plan, ResourceChange};
+use crate::provider::{self, Provider};
 use crate::redact::{Redactor, Shown};
 use crate::report::{Action, AttrChange, Class, Op, Report, ResourceReport, Totals};
 use crate::schema::{Schemas, Shape};
@@ -42,9 +43,25 @@ pub fn diff_plan(plan: &Plan, config: &Config, schemas: Option<&Schemas>) -> Rep
         resources.push(diff_resource(resource, action, &redactor, config, schemas));
     }
 
+    // What the refresh found changed outside Terraform. Reported apart from
+    // the plan: it is not something the plan will do.
+    let mut drift = Vec::new();
+    for resource in &plan.resource_drift {
+        if resource.mode == "data" {
+            continue;
+        }
+        let action = Action::from_plan(&resource.change.actions);
+        if action == Action::Steady && resource.previous_address.is_none() {
+            continue;
+        }
+        totals.drifted += 1;
+        drift.push(diff_resource(resource, action, &redactor, config, schemas));
+    }
+
     Report {
         totals,
         resources,
+        drift,
         gate: None,
     }
 }
@@ -58,6 +75,12 @@ fn diff_resource(
 ) -> ResourceReport {
     let change = &resource.change;
     let mut changes = Vec::new();
+    let forcing: Vec<Path> = change
+        .replace_paths
+        .iter()
+        .map(|segments| replace_path(segments))
+        .filter(|path| !path.is_empty())
+        .collect();
 
     // Creations and removals are reported as one line; listing every attribute
     // of a new resource is not a diff.
@@ -66,6 +89,9 @@ fn diff_resource(
             redactor,
             config,
             resource_type: &resource.resource_type,
+            provider: provider::find(resource.provider_name.as_deref(), &resource.resource_type),
+            forcing: &forcing,
+            plan_path: Path::default(),
             out: &mut changes,
         };
         walker.walk(
@@ -88,11 +114,7 @@ fn diff_resource(
         previous_address: resource.previous_address.clone(),
         resource_type: resource.resource_type.clone(),
         action,
-        forced_by: change
-            .replace_paths
-            .iter()
-            .map(|segments| replace_path(segments).to_string())
-            .collect(),
+        forced_by: forcing.iter().map(Path::to_string).collect(),
         changes,
     }
 }
@@ -137,6 +159,14 @@ struct Walker<'a> {
     redactor: &'a Redactor,
     config: &'a Config,
     resource_type: &'a str,
+    /// Provider-specific knowledge, when tfdiff has any for this resource.
+    provider: Option<&'static dyn Provider>,
+    /// Paths that force the recreation, in the plan's own terms.
+    forcing: &'a [Path],
+    /// Where the walk is in the plan's own terms: attribute names and list
+    /// positions, as `replace_paths` writes them. Never printed, so unlike the
+    /// display path it holds map keys as they are.
+    plan_path: Path,
     out: &'a mut Vec<AttrChange>,
 }
 
@@ -188,6 +218,7 @@ impl Walker<'_> {
                     } else {
                         path.push(Segment::Attr(key.to_owned()));
                     }
+                    self.plan_path.push(Segment::Attr(key.to_owned()));
                     self.walk(
                         path,
                         Sides {
@@ -199,6 +230,7 @@ impl Walker<'_> {
                             shape: at.shape.and_then(|shape| shape.child(key)),
                         },
                     );
+                    self.plan_path.pop();
                     path.pop();
                 }
             }
@@ -211,9 +243,26 @@ impl Walker<'_> {
                     before.map(|value| self.redactor.show(path, value, at.before_mask, at.shape));
                 let shown_after =
                     after.map(|value| self.redactor.show(path, value, at.after_mask, at.shape));
+                // A masked value keeps the default class: how two hidden
+                // values relate is not something to report.
+                let masked = [&shown_before, &shown_after]
+                    .into_iter()
+                    .flatten()
+                    .any(Shown::is_masked);
+                let class = match (before, after) {
+                    (Some(Value::String(old)), Some(Value::String(new)))
+                        if !masked
+                            && self
+                                .provider
+                                .is_some_and(|provider| provider.case_insensitive(old, new)) =>
+                    {
+                        Class::Recased
+                    }
+                    _ => Class::Effective,
+                };
                 self.emit(
                     path,
-                    Class::Effective,
+                    class,
                     presence_op(before, after),
                     shown_before,
                     shown_after,
@@ -273,6 +322,7 @@ impl Walker<'_> {
 
         for (old_index, new_index) in pairs {
             path.push(new_labels[new_index].clone());
+            self.plan_path.push(Segment::Index(new_index));
             self.walk(
                 path,
                 Sides {
@@ -284,10 +334,12 @@ impl Walker<'_> {
                     shape: element,
                 },
             );
+            self.plan_path.pop();
             path.pop();
         }
         for old_index in removed {
             path.push(old_labels[old_index].clone());
+            self.plan_path.push(Segment::Index(old_index));
             self.walk(
                 path,
                 Sides {
@@ -299,10 +351,12 @@ impl Walker<'_> {
                     shape: element,
                 },
             );
+            self.plan_path.pop();
             path.pop();
         }
         for new_index in added {
             path.push(new_labels[new_index].clone());
+            self.plan_path.push(Segment::Index(new_index));
             self.walk(
                 path,
                 Sides {
@@ -314,6 +368,7 @@ impl Walker<'_> {
                     shape: element,
                 },
             );
+            self.plan_path.pop();
             path.pop();
         }
         // The order of a set carries no meaning.
@@ -366,10 +421,15 @@ impl Walker<'_> {
         before: Option<Shown>,
         after: Option<Shown>,
     ) {
+        // Forcing when the difference is inside a forcing path, or contains one.
+        let forcing = self.forcing.iter().any(|forcing| {
+            self.plan_path.starts_with(forcing) || forcing.starts_with(&self.plan_path)
+        });
         self.out.push(AttrChange {
             path: path.to_string(),
             class,
             op,
+            forcing,
             before,
             after,
         });

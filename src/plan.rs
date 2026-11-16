@@ -14,6 +14,9 @@ pub struct Plan {
     pub format_version: String,
     #[serde(default)]
     pub resource_changes: Vec<ResourceChange>,
+    /// Changes made outside Terraform, found when the plan refreshed the state.
+    #[serde(default)]
+    pub resource_drift: Vec<ResourceChange>,
 }
 
 #[derive(Debug, Deserialize)]

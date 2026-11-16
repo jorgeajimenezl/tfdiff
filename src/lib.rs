@@ -12,6 +12,7 @@ pub mod error;
 pub mod gate;
 pub mod labels;
 pub mod plan;
+pub mod provider;
 pub mod redact;
 pub mod render;
 pub mod report;
